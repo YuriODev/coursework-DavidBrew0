@@ -1,0 +1,55 @@
+{% extends 'base.html' %}  <!-- Extends the base.html layout for this page -->
+{% block content %}  <!-- Defines the content block for the page -->
+<div class="message-box">  <!-- Container for the chat room -->
+  <h2>Chat Room: {{code}}</h2>  <!-- Display the chat room code -->
+  <div class="messages" id="messages"></div>  <!-- Container for displaying messages -->
+  <div class="inputs">  <!-- Container for message input -->
+    <input
+      type="text"
+      rows="3"
+      placeholder="Message"
+      name="message"
+      id="message"
+    />
+    <button type="button" name="send" id="send-btn" onClick="sendMessage()">  <!-- Button to send message -->
+      Send
+    </button>
+  </div>
+</div>
+<script type="text/javascript">
+  // Connect to socket io server
+  var socketio = io();
+  const messages = document.getElementById("messages");
+  // Function to create a new message and add it to the messages div
+  const createMessage = (name, msg) => {
+    const content = `
+    <div class="text">
+        <span>
+            <strong>${name}</strong>: ${msg}
+        </span>
+        <span class="muted">
+            ${new Date().toLocaleString()}
+        </span>
+    </div>
+    `;
+    messages.innerHTML += content;
+  };
+  // Listen for incoming messages from the server
+  socketio.on("message", (data) => {
+    createMessage(data.name, data.message);
+  });
+  // Function to send a message to the server
+  const sendMessage = () => {
+    const message = document.getElementById("message");
+    if (message.value == "") return;
+    socketio.emit("message", { data: message.value });
+    message.value = "";
+  };
+</script>
+{% for msg in messages %}  <!-- Iterate over messages -->
+<script type="text/javascript">
+  // Create individual messages based on the data from the server
+  createMessage("{{msg.name}}", "{{msg.message}}");
+</script>
+{% endfor %}  <!-- End of message iteration block -->
+{% endblock %}  <!-- End of content block -->

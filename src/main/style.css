@@ -1,0 +1,80 @@
+/* Define styles for the content */
+.content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Define styles for the buttons */
+.buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* Define styles for the join button */
+.join {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+}
+
+/* Define styles for the create button */
+.create-btn {
+  width: 100%;
+}
+
+/* Define styles for the message box */
+.message-box {
+  border-color: black;
+  border-width: 2px;
+  border-style: solid;
+  border-radius: 10px;
+  background-color: whitesmoke;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
+  width: 80vw;
+  align-items: stretch;
+}
+
+/* Define styles for the messages */
+.messages {
+  overflow-y: scroll;
+  flex: 1;
+  width: 100%;
+}
+
+/* Define styles for the message inputs */
+.inputs {
+  padding: 10px;
+  display: flex;
+}
+
+/* Define styles for the heading */
+h2 {
+  text-align: center;
+}
+
+/* Define styles for the message input */
+#message {
+  flex: 1;
+}
+
+/* Define styles for the message text */
+.text {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* Define styles for muted text */
+.muted {
+  font-size: 10px;
+  color: darkgray;
+}
