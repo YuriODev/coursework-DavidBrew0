@@ -1,159 +1,128 @@
-from flask import Flask,render_template, request, session, redirect
-from flask_socketio import join_room, leave_room, SocketIO
+from flask import Flask, render_template, request, session, redirect, url_for
+from flask_socketio import join_room, leave_room, send, SocketIO
 import random
 from string import ascii_uppercase
-from Cryptodome.PublicKey import RSA
-from Cryptodome.Cipher import PKCS1_OAEP
-
+from cryptography.fernet import Fernet
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "secret"
+app.config["SECRET_KEY"] = "hhhfghs"
 socketio = SocketIO(app)
 
-rooms = {}
-user_sessions = {}  # New: Mapping of usernames to session IDs
-user_keys = {}  # New: Storage for user keys
+key = Fernet.generate_key()
+cipher_suite = Fernet(key)
 
-# Generate a unique room code
+rooms = {}
+
 def generate_unique_code(length):
     while True:
         code = ""
         for _ in range(length):
             code += random.choice(ascii_uppercase)
-
         if code not in rooms:
             break
-
     return code
 
-# Handle the home route
+def encrypt_message(message_plain):
+    # """Encrypts a message."""
+    if isinstance(message_plain, str):
+        message_plain = message_plain.encode()
+    encrypted_text = cipher_suite.encrypt(message_plain)
+    return encrypted_text.decode()
+
+def decrypt_message(encrypted_text):
+    #"""Decrypts an encrypted message."""
+    decrypted_text = cipher_suite.decrypt(encrypted_text.encode()).decode("utf-8")
+    return decrypted_text
+
 @app.route("/", methods=["POST", "GET"])
 def home():
-    session.clear()
-    if request.method == "POST":
-        name = request.form.get("name")
-        code = request.form.get("code")
-        join = request.form.get("join", False)
-        create = request.form.get("create", False)
+  session.clear()
+  if request.method == "POST":
+      name = request.form.get("name")
+      code = request.form.get("code")
+      join = request.form.get("join", False)
+      create = request.form.get("create", False)
 
-        if not name:
-            return render_template("home.html", error="Please enter a name.", code=code, name=name)
+      if not name:
+          return render_template("home.html", error="Please enter a name.", code=code, name=name)
 
-        if join != False and not code:
-            return render_template("home.html", error="Please enter a room code.", code=code, name=name)
+      if join != False and not code:
+          return render_template("home.html", error="Please enter a room code.", code=code, name=name)
 
-        room = code
-        if create != False:
-            room = generate_unique_code(4)
-            rooms[room] = {"members": 0, "messages": []}
-        elif code not in rooms:
-            return render_template("home.html", error="Room does not exist.", code=code, name=name)
+      room = code
+      if create != False:
+          room = generate_unique_code(4)
+          rooms[room] = {"members": 0, "messages": []}
+      elif code not in rooms:
+          return render_template("home.html", error="Room does not exist.", code=code, name=name)
 
-        session["room"] = room
-        session["name"] = name
-        return redirect(url_for("room"))
+      session["room"] = room
+      session["name"] = name
+      return redirect(url_for("room"))
 
-    return render_template("home.html")
+  return render_template("home.html")
 
-# Handle the room route
 @app.route("/room")
 def room():
     room = session.get("room")
     if room is None or session.get("name") is None or room not in rooms:
         return redirect(url_for("home"))
 
-    return render_template("room.html", code=room, messages=rooms[room]["messages"])
-
+    decrypted_messages = [{"name": msg["name"], "message": decrypt_message(msg["message"])} for msg in rooms[room]["messages"]]
+    return render_template("room.html", code=room, messages=decrypted_messages)
 
 @socketio.on("message")
 def message(data):
     room = session.get("room")
-    sender_name = session.get("name")
     if room not in rooms:
         return
-    for participant in rooms[room]['participants']:
-        if participant == sender_name:
-            continue  # Skip the sender
-        recipient_sid = user_sessions.get(participant)
-        if recipient_sid:
-            recipient_public_key = get_public_key(participant)
-            encrypted_message = encrypt_message(data["data"], recipient_public_key)
-            send({'name': sender_name, 'message': encrypted_message}, room=recipient_sid)
-    participants = [participant for participant in rooms[room]["participants"] if participant != sender_name]
-    for participant in participants:
-        # For each participant, encrypt the message with their public key
-        recipient_public_key = get_public_key(participant)
-        encrypted_message = encrypt_message(data["data"], recipient_public_key)
-        # Create a unique message content for each participant
-        content = {
-            "name": sender_name,
-            "encrypted_message": encrypted_message,  # Sending encrypted message
-            # You may need to send additional data like a message ID or encryption metadata
-        }
-        # Send encrypted message to the participant
-        # You might need to adjust this part based on how you manage sending messages to specific users
-        send(content, to=participant)
-    # Optionally, store or log the original message securely on the server for auditing or history
-    print(f"{sender_name} sent an encrypted message in room {room}")
 
+    # Encrypt the message for storage
+    encrypted_message = encrypt_message(data["data"])
+    # Decrypt immediately for broadcasting
+    decrypted_message = decrypt_message(encrypted_message)
 
-# Handle the connection event
-@socketio.on('connect')
-def on_connect():
-    username = session.get('name')
-    # Map the current user's session ID to their username
-    user_sessions[username] = request.sid
-    # Generate and store keys if not already present
-    if username not in user_keys:
-        generate_keys(username)
+    # Prepare the content with the decrypted message for broadcast
+    content = {
+        "name": session.get("name"),
+        "message": decrypted_message  # Sending decrypted message
+    }
+
+    # Send decrypted message to users in the room
+    send(content, to=room)
+
+    # Store the original encrypted message for record-keeping
+    rooms[room]["messages"].append({"name": session.get("name"), "message": encrypted_message})
+
+    print(f"{session.get('name')} said: {decrypted_message}")
+
+@socketio.on("connect")
+def connect(auth):
+    room = session.get("room")
+    name = session.get("name")
+    if not room or not name:
+        return
+    if room not in rooms:
+        leave_room(room)
+        return
 
     join_room(room)
-    send({"name": name, "message": "has entered the room"}, to=room)  # You need to define the send function to handle sending messages
-    rooms[room]["members"] += 1  # Increase the member count of the room
-    print(f"{name} joined room {room}")  # Print the join message to the console
+    send({"name": name, "message": "has entered the room"}, to=room)
+    rooms[room]["members"] += 1
+    print(f"{name} joined room {room}")
 
-# Handle the disconnection event
 @socketio.on("disconnect")
 def disconnect():
     room = session.get("room")
     name = session.get("name")
-    leave_room(room)  # Leave the room
+    leave_room(room)
 
     if room in rooms:
-        rooms[room]["members"] -= 1  # Decrease the member count of the room
+        rooms[room]["members"] -= 1
         if rooms[room]["members"] <= 0:
-            del rooms[room]  # Remove the room if there are no members left
+            del rooms[room]
 
-    send({"name": name, "message": "has left the room"}, to=room)  # You need to define the send function to handle sending messages
-    print(f"{name} has left the room {room}")  # Print the leave message to the console
+    send({"name": name, "message": "has left the room"}, to=room)
+    print(f"{name} has left the room {room}")
 
-# Simulated storage for user keys
-user_keys = {}
-
-def generate_keys(user_name):
-    key = RSA.generate(2048)
-    private_key = key.export_key()
-    public_key = key.publickey().export_key()
-    user_keys[user_name] = {"public_key": public_key, "private_key": private_key}
-
-def get_public_key(user_name):
-    return user_keys[user_name]["public_key"]
-
-def get_private_key(user_name):
-    return user_keys[user_name]["private_key"]
-
-
-def encrypt_message(message, public_key):
-  recipient_key = RSA.import_key(public_key)
-  cipher_rsa = PKCS1_OAEP.new(recipient_key)
-  encrypted_message = cipher_rsa.encrypt(message.encode('utf-8'))
-  return encrypted_message
-
-def decrypt_message(encrypted_message, private_key):
-  key = RSA.import_key(private_key)
-  cipher_rsa = PKCS1_OAEP.new(key)
-  decrypted_message = cipher_rsa.decrypt(encrypted_message)
-  return decrypted_message.decode('utf-8')
-
-# Run the application
 if __name__ == "__main__":
-    socketio.run(app, port=5000, debug=True)  # Run the app on port 5000 with debug mode enabled
+    socketio.run(app, debug=True)
