@@ -1,128 +1,183 @@
-from flask import Flask, render_template, request, session, redirect, url_for
-from flask_socketio import join_room, leave_room, send, SocketIO
-import random
-from string import ascii_uppercase
-from cryptography.fernet import Fernet
-app = Flask(__name__)
-app.config["SECRET_KEY"] = "hhhfghs"
-socketio = SocketIO(app)
+  from flask import Flask, render_template, request, session, redirect, url_for
+  from flask_socketio import join_room, leave_room, send, SocketIO
+  import random
+  from string import ascii_uppercase
 
-key = Fernet.generate_key()
-cipher_suite = Fernet(key)
+  app = Flask(__name__)
+  app.config["SECRET_KEY"] = "hhhfghs"  # Secret key for Flask session management
+  socketio = SocketIO(app)
 
-rooms = {}
 
-def generate_unique_code(length):
-    while True:
-        code = ""
-        for _ in range(length):
-            code += random.choice(ascii_uppercase)
-        if code not in rooms:
-            break
-    return code
+  class RSAEncryption:
+      def __init__(self, p, q):
+          self.p = p  # Prime number p
+          self.q = q  # Prime number q
+          self.public_key, self.private_key = self.generate_keypair()  # Generate RSA keypair
 
-def encrypt_message(message_plain):
-    # """Encrypts a message."""
-    if isinstance(message_plain, str):
-        message_plain = message_plain.encode()
-    encrypted_text = cipher_suite.encrypt(message_plain)
-    return encrypted_text.decode()
+      # Generate RSA keypair
+      def generate_keypair(self):
+          # Calculate n and phi
+          n = self.p * self.q  # n = p * q
+          phi = (self.p - 1) * (self.q - 1)  # phi = (p - 1) * (q - 1)
 
-def decrypt_message(encrypted_text):
-    #"""Decrypts an encrypted message."""
-    decrypted_text = cipher_suite.decrypt(encrypted_text.encode()).decode("utf-8")
-    return decrypted_text
+          # Choose a random integer e such that 1 < e < phi and gcd(e, phi) = 1
+          e = random.randint(2, phi - 1)
+          while self.gcd(e, phi) != 1:
+              e = random.randint(2, phi - 1)
 
-@app.route("/", methods=["POST", "GET"])
-def home():
-  session.clear()
-  if request.method == "POST":
-      name = request.form.get("name")
-      code = request.form.get("code")
-      join = request.form.get("join", False)
-      create = request.form.get("create", False)
+          # Calculate d, the modular multiplicative inverse of e modulo phi
+          d = self.mod_inverse(e, phi)
 
-      if not name:
-          return render_template("home.html", error="Please enter a name.", code=code, name=name)
+          # Return public and private keys
+          return (e, n), (d, n)
 
-      if join != False and not code:
-          return render_template("home.html", error="Please enter a room code.", code=code, name=name)
+      # Calculate greatest common divisor
+      def gcd(self, a, b):
+          while b != 0:
+              a, b = b, a % b
+          return a
 
-      room = code
-      if create != False:
-          room = generate_unique_code(4)
-          rooms[room] = {"members": 0, "messages": []}
-      elif code not in rooms:
-          return render_template("home.html", error="Room does not exist.", code=code, name=name)
+      # Calculate modular multiplicative inverse
+      def mod_inverse(self, a, m):
+          m0, x0, x1 = m, 0, 1
+          while a > 1:
+              q = a // m
+              m, a = a % m, m
+              x0, x1 = x1 - q * x0, x0
+          return x1 + m0 if x1 < 0 else x1
 
-      session["room"] = room
-      session["name"] = name
-      return redirect(url_for("room"))
+      # Encrypt a message using the public key
+      def encrypt_message(self, message_plain):
+          encrypted_text = [pow(ord(char), self.public_key[0], self.public_key[1]) for char in message_plain]
+          return encrypted_text
 
-  return render_template("home.html")
+      # Decrypt a message using the private key
+      def decrypt_message(self, encrypted_text):
+          decrypted_text = [chr(pow(char, self.private_key[0], self.private_key[1])) for char in encrypted_text]
+          return ''.join(decrypted_text)
 
-@app.route("/room")
-def room():
-    room = session.get("room")
-    if room is None or session.get("name") is None or room not in rooms:
-        return redirect(url_for("home"))
+  # Class for representing a chat room
+  class Room:
+      def __init__(self, code):
+          self.code = code  # Room code
+          self.members = 0  # Number of members in the room
+          self.messages = []  # List of messages in the room
 
-    decrypted_messages = [{"name": msg["name"], "message": decrypt_message(msg["message"])} for msg in rooms[room]["messages"]]
-    return render_template("room.html", code=room, messages=decrypted_messages)
+  # Class for managing the chat application
+  class ChatApp:
+      def __init__(self):
+          self.rooms = {}  # Dictionary to store room information
+          self.encryption = RSAEncryption(61, 53)  # Initialize RSA encryption with prime numbers p and q
 
-@socketio.on("message")
-def message(data):
-    room = session.get("room")
-    if room not in rooms:
-        return
+      # Generate a unique room code
+      def generate_unique_code(self, length):
+          while True:
+              code = "".join(random.choices(ascii_uppercase, k=length))
+              if code not in self.rooms:
+                  break
+          return code
 
-    # Encrypt the message for storage
-    encrypted_message = encrypt_message(data["data"])
-    # Decrypt immediately for broadcasting
-    decrypted_message = decrypt_message(encrypted_message)
+      # Handle incoming message
+      def handle_message(self, data, room):
+          # Encrypt the message
+          encrypted_message = self.encryption.encrypt_message(data["data"])
+          # Decrypt immediately for broadcasting
+          decrypted_message = self.encryption.decrypt_message(encrypted_message)
+          content = {"name": session.get("name"), "message": decrypted_message}
+          # Send decrypted message to users in the room
+          send(content, to=room)
+          # Store original encrypted message for record-keeping
+          room.messages.append({"name": session.get("name"), "message": encrypted_message})
+          print(f"{session.get('name')} said: {decrypted_message}")
 
-    # Prepare the content with the decrypted message for broadcast
-    content = {
-        "name": session.get("name"),
-        "message": decrypted_message  # Sending decrypted message
-    }
+      # Join a room
+      def join_room(self, room, name):
+          if room not in self.rooms:
+              leave_room(room)
+              return False
+          join_room(room)
+          send({"name": name, "message": "has entered the room"}, to=room)
+          self.rooms[room].members += 1
+          print(f"{name} joined room {room}")
+          return True
 
-    # Send decrypted message to users in the room
-    send(content, to=room)
+      # Leave a room
+      def leave_room(self, room, name):
+          leave_room(room)
+          if room in self.rooms:
+              self.rooms[room].members -= 1
+              if self.rooms[room].members <= 0:
+                  del self.rooms[room]
+          send({"name": name, "message": "has left the room"}, to=room)
+          print(f"{name} has left the room {room}")
 
-    # Store the original encrypted message for record-keeping
-    rooms[room]["messages"].append({"name": session.get("name"), "message": encrypted_message})
+  # Instantiate the ChatApp class
+  chat_app = ChatApp()
 
-    print(f"{session.get('name')} said: {decrypted_message}")
+  # Route for home page
+  @app.route("/", methods=["POST", "GET"])
+  def home():
+      session.clear()
+      if request.method == "POST":
+          name = request.form.get("name")
+          code = request.form.get("code")
+          join = request.form.get("join", False)
+          create = request.form.get("create", False)
 
-@socketio.on("connect")
-def connect(auth):
-    room = session.get("room")
-    name = session.get("name")
-    if not room or not name:
-        return
-    if room not in rooms:
-        leave_room(room)
-        return
+          if not name:
+              return render_template("home.html", error="Please enter a name.", code=code, name=name)
 
-    join_room(room)
-    send({"name": name, "message": "has entered the room"}, to=room)
-    rooms[room]["members"] += 1
-    print(f"{name} joined room {room}")
+          if join != False and not code:
+              return render_template("home.html", error="Please enter a room code.", code=code, name=name)
 
-@socketio.on("disconnect")
-def disconnect():
-    room = session.get("room")
-    name = session.get("name")
-    leave_room(room)
+          room = code
+          if create != False:
+              room = chat_app.generate_unique_code(4)
+              chat_app.rooms[room] = Room(room)
+          elif code not in chat_app.rooms:
+              return render_template("home.html", error="Room does not exist.", code=code, name=name)
 
-    if room in rooms:
-        rooms[room]["members"] -= 1
-        if rooms[room]["members"] <= 0:
-            del rooms[room]
+          session["room"] = room
+          session["name"] = name
+          return redirect(url_for("room"))
 
-    send({"name": name, "message": "has left the room"}, to=room)
-    print(f"{name} has left the room {room}")
+      return render_template("home.html")
 
-if __name__ == "__main__":
-    socketio.run(app, debug=True)
+  # Route for room page
+  @app.route("/room")
+  def room():
+      room_code = session.get("room")
+      if room_code is None or session.get("name") is None or room_code not in chat_app.rooms:
+          return redirect(url_for("home"))
+
+      return render_template("room.html", code=room_code)
+
+  # Socket.io event handler for receiving messages
+  @socketio.on("message")
+  def message(data):
+      room = session.get("room")
+      if room not in chat_app.rooms:
+          return
+      chat_app.handle_message(data, room)
+
+  # Socket.io event handler for connecting to a room
+  @socketio.on("connect")
+  def connect(auth):
+      room = session.get("room")
+      name = session.get("name")
+      if not room or not name:
+          return
+      if not chat_app.join_room(room, name):
+          return redirect(url_for("home"))
+
+  # Socket.io event handler for disconnecting from a room
+  @socketio.on("disconnect")
+  def disconnect():
+      room = session.get("room")
+      name = session.get("name")
+      if room:
+          chat_app.leave_room(room, name)
+
+  # Run the application
+  if __name__ == "__main__":
+      socketio.run(app, debug=True)
